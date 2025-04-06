@@ -1,7 +1,12 @@
 import { createLogger } from '@/lib/logs/console-logger'
 import { useCustomToolsStore } from '@/stores/custom-tools/store'
 import { useEnvironmentStore } from '@/stores/settings/environment/store'
-import { airtableReadTool, airtableUpdateTool, airtableWriteTool } from './airtable'
+import {
+  airtableCreateRecordsTool,
+  airtableGetRecordTool,
+  airtableListRecordsTool,
+  airtableUpdateRecordTool,
+} from '@/tools/airtable'
 import { confluenceListTool, confluenceRetrieveTool, confluenceUpdateTool } from './confluence'
 import { docsCreateTool, docsReadTool, docsWriteTool } from './docs'
 import { driveDownloadTool, driveListTool, driveUploadTool } from './drive'
@@ -37,12 +42,12 @@ import { opportunitiesTool as salesforceOpportunities } from './salesforce/oppor
 import { searchTool as serperSearch } from './serper/search'
 import { sheetsReadTool, sheetsUpdateTool, sheetsWriteTool } from './sheets'
 import { slackMessageTool } from './slack/message'
-import { supabaseInsertTool, supabaseQueryTool, supabaseUpdateTool } from './supabase'
+import { supabaseInsertTool, supabaseQueryTool } from './supabase'
 import { tavilyExtractTool, tavilySearchTool } from './tavily'
 import { sendSMSTool } from './twilio/send'
 import { typeformFilesTool, typeformInsightsTool, typeformResponsesTool } from './typeform'
 import { OAuthTokenPayload, ToolConfig, ToolResponse } from './types'
-import { formatRequestParams, validateToolRequest } from './utils'
+import { formatRequestParams, validateToolRequest, transformTable } from './utils'
 import { visionTool } from './vision/vision'
 import { whatsappSendMessageTool } from './whatsapp'
 import { xReadTool, xSearchTool, xUserTool, xWriteTool } from './x'
@@ -69,7 +74,6 @@ export const tools: Record<string, ToolConfig> = {
   tavily_extract: tavilyExtractTool,
   supabase_query: supabaseQueryTool,
   supabase_insert: supabaseInsertTool,
-  supabase_update: supabaseUpdateTool,
   typeform_responses: typeformResponsesTool,
   typeform_files: typeformFilesTool,
   typeform_insights: typeformInsightsTool,
@@ -113,9 +117,10 @@ export const tools: Record<string, ToolConfig> = {
   confluence_update: confluenceUpdateTool,
   twilio_send_sms: sendSMSTool,
   dalle_generate: dalleTool,
-  airtable_read: airtableReadTool,
-  airtable_write: airtableWriteTool,
-  airtable_update: airtableUpdateTool,
+  airtable_create_records: airtableCreateRecordsTool,
+  airtable_get_record: airtableGetRecordTool,
+  airtable_list_records: airtableListRecordsTool,
+  airtable_update_record: airtableUpdateRecordTool,
   mistral_parser: mistralParserTool,
 }
 
@@ -331,24 +336,55 @@ export async function executeTool(
       throw new Error(`Tool not found: ${toolId}`)
     }
 
-    // For custom tools, try direct execution in browser first if available
-    if (toolId.startsWith('custom_') && tool.directExecution) {
-      const directResult = await tool.directExecution(params)
-      if (directResult) {
-        // Add timing data to the result
-        const endTime = new Date()
-        const endTimeISO = endTime.toISOString()
-        const duration = endTime.getTime() - startTime.getTime()
-        return {
-          ...directResult,
-          timing: {
-            startTime: startTimeISO,
-            endTime: endTimeISO,
-            duration,
-          },
+    // For any tool with direct execution capability, try it first
+    if (tool.directExecution) {
+      try {
+        const directResult = await tool.directExecution(params)
+        if (directResult) {
+          // Add timing data to the result
+          const endTime = new Date()
+          const endTimeISO = endTime.toISOString()
+          const duration = endTime.getTime() - startTime.getTime()
+          
+          // Apply post-processing if available and not skipped
+          if (tool.postProcess && directResult.success && !skipPostProcess) {
+            try {
+              const postProcessResult = await tool.postProcess(directResult, params, executeTool)
+              return {
+                ...postProcessResult,
+                timing: {
+                  startTime: startTimeISO,
+                  endTime: endTimeISO,
+                  duration,
+                },
+              }
+            } catch (error) {
+              logger.error(`Error in post-processing for tool ${toolId}:`, { error })
+              return {
+                ...directResult,
+                timing: {
+                  startTime: startTimeISO,
+                  endTime: endTimeISO,
+                  duration,
+                },
+              }
+            }
+          }
+          
+          return {
+            ...directResult,
+            timing: {
+              startTime: startTimeISO,
+              endTime: endTimeISO,
+              duration,
+            },
+          }
         }
+        // If directExecution returns undefined, fall back to API route
+      } catch (error) {
+        logger.warn(`Direct execution failed for tool ${toolId}, falling back to API:`, error)
+        // Fall back to API route if direct execution fails
       }
-      // If directExecution returns undefined, fall back to API route
     }
 
     // For internal routes or when skipProxy is true, call the API directly
