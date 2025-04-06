@@ -10,7 +10,7 @@ export const openaiProvider: ProviderConfig = {
   name: 'OpenAI',
   description: "OpenAI's GPT models",
   version: '1.0.0',
-  models: ['gpt-4o', 'o1', 'o3-mini'],
+  models: ['gpt-4o', 'o1', 'o3-mini', 'grok-2-1212', 'o3-turbo', 'o3-turbo-16k'],
   defaultModel: 'gpt-4o',
 
   executeRequest: async (request: ProviderRequest): Promise<ProviderResponse> => {
@@ -35,6 +35,8 @@ export const openaiProvider: ProviderConfig = {
 
     const openai = new OpenAI({
       apiKey: request.apiKey,
+      // baseURL: "https://api.taam.cloud/v1", // cutom open ai Base URL
+      baseURL: process.env.OPENAI_BASE_URL || 'https://api.taam.cloud/v1',
       dangerouslyAllowBrowser: true,
     })
 

@@ -25,7 +25,7 @@ export const providers: Record<
 > = {
   openai: {
     ...openaiProvider,
-    models: ['gpt-4o', 'o1', 'o3-mini'],
+    models: ['gpt-4o', 'o1', 'o3-mini' , 'o1-mini', 'grok-2-1212', 'o3-turbo-16k'],
     modelPatterns: [/^gpt/, /^o1/],
   },
   anthropic: {

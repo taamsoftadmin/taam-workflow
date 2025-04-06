@@ -2,7 +2,7 @@ import { headers } from 'next/headers'
 import { betterAuth } from 'better-auth'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import { nextCookies } from 'better-auth/next-js'
-import { emailOTP, genericOAuth } from 'better-auth/plugins'
+import { emailOTP, genericOAuth, magicLink } from 'better-auth/plugins'
 import { Resend } from 'resend'
 import {
   getEmailSubject,
@@ -33,6 +33,9 @@ const resend = validResendAPIKEY
         },
       },
     }
+
+// Add this before the auth configuration
+let lastGeneratedMagicLink: string | undefined;
 
 export const auth = betterAuth({
   database: drizzleAdapter(db, {
@@ -431,6 +434,48 @@ export const auth = betterAuth({
         },
       ],
     }),
+    magicLink({
+      sendMagicLink: async ({ email, url }, request) => {
+        try {
+          if (!email) {
+            throw new Error('Email is required')
+          }
+
+          // Always capture the magic link URL
+          lastGeneratedMagicLink = url;
+
+          // In development with no RESEND_API_KEY, log magic link
+          if (!validResendAPIKEY) {
+            logger.info('🔗 MAGIC LINK LOGIN:', {
+              email: email,
+              url: url,
+            })
+            return
+          }
+
+          const html = `<p>Click the link below to sign in:</p><p><a href="${url}">${url}</a></p>`
+
+          const result = await resend.emails.send({
+            from: 'Sim Studio <onboarding@simstudio.ai>',
+            to: email,
+            subject: 'Sign in to Sim Studio',
+            html,
+          })
+
+          if (!result) {
+            throw new Error('Failed to send magic link')
+          }
+        } catch (error) {
+          logger.error('Error sending magic link:', {
+            error,
+            email,
+          })
+          throw error
+        }
+      },
+      expiresIn: 300, // 5 minutes
+      disableSignUp: false,
+    }),
   ],
   pages: {
     signIn: '/login',
@@ -440,6 +485,13 @@ export const auth = betterAuth({
     verifyRequest: '/verify-request',
   },
 })
+
+// Add this export
+export function getLastGeneratedMagicLink() {
+  const link = lastGeneratedMagicLink;
+  lastGeneratedMagicLink = undefined; // Clear after getting
+  return link;
+}
 
 // Server-side auth helpers
 export async function getSession() {
